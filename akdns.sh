@@ -35,6 +35,9 @@ AKDNS_TG_URL="https://t.me/+MEKKEBUkW6ZjMzBl"
 # ---- 定期自动测速（cron / systemd timer）----
 # 安装定时任务时，脚本会被复制到此固定路径供定时器稳定调用
 AKDNS_INSTALL_PATH="/usr/local/bin/akdns"
+# 通过管道 / 进程替换运行（bash <(curl ...)）时，脚本无实体文件，
+# 安装定时任务前会从此地址下载脚本落地到 AKDNS_INSTALL_PATH
+AKDNS_SELF_URL="https://raw.githubusercontent.com/arieeses/AK-DNS/main/akdns.sh"
 # 非交互（--auto）运行的日志文件（cron 模式）
 AKDNS_AUTO_LOG="/var/log/akdns-auto.log"
 # 未指定间隔时的默认定时频率（hourly / daily / weekly / Nh）
@@ -362,8 +365,10 @@ MSG[zh.cron_removed]="已卸载定期自动测速任务"
 MSG[en.cron_removed]="Removed the scheduled auto speed-test task"
 MSG[zh.cron_none]="未发现已安装的定时任务"
 MSG[en.cron_none]="No scheduled task found"
-MSG[zh.cron_need_file]="通过管道运行（wget|bash）无法定位脚本文件；请先将脚本保存到本地再安装定时任务"
-MSG[en.cron_need_file]="Cannot locate the script file when run via a pipe (wget|bash); save the script locally first, then install the scheduled task"
+MSG[zh.cron_downloading]="正在从远程下载脚本以安装定时任务: %s"
+MSG[en.cron_downloading]="Downloading the script to install the scheduled task: %s"
+MSG[zh.cron_need_file]="无法获取脚本文件（下载失败且非本地文件）；请检查网络，或先将脚本保存到本地再安装定时任务"
+MSG[en.cron_need_file]="Could not obtain the script file (download failed and not a local file); check your network, or save the script locally first, then install the scheduled task"
 MSG[zh.cron_bad_interval]="无法识别的间隔: %s（支持 hourly/daily/weekly 或 Nh）"
 MSG[en.cron_bad_interval]="Unrecognized interval: %s (use hourly/daily/weekly or Nh)"
 MSG[zh.cron_no_scheduler]="系统既无 systemd 也无 cron，无法安装定时任务"
@@ -1897,20 +1902,46 @@ run_auto_apply() {
   return 1
 }
 
-# 将当前脚本复制到固定路径，供定时器稳定调用
+# 将当前脚本复制到固定路径，供定时器稳定调用。
+# 若通过管道 / 进程替换运行（无实体文件），则从 AKDNS_SELF_URL 下载落地。
 install_self() {
+  # 已经就是安装目标本身，无需再复制
   local src="${BASH_SOURCE[0]}"
-  if [[ -z "$src" ]] || [[ ! -f "$src" ]]; then
-    log_error "$(t cron_need_file)"
-    return 1
-  fi
-  if install -m 755 "$src" "$AKDNS_INSTALL_PATH" 2>/dev/null; then
+  if [[ -n "$src" ]] && [[ "$(readlink -f "$src" 2>/dev/null)" == "$(readlink -f "$AKDNS_INSTALL_PATH" 2>/dev/null)" ]]; then
+    chmod 755 "$AKDNS_INSTALL_PATH" 2>/dev/null
     return 0
   fi
-  if cp -f "$src" "$AKDNS_INSTALL_PATH" 2>/dev/null && chmod 755 "$AKDNS_INSTALL_PATH" 2>/dev/null; then
-    return 0
+
+  # 1) 有实体脚本文件：直接复制
+  if [[ -n "$src" ]] && [[ -f "$src" ]] && [[ -r "$src" ]]; then
+    if install -m 755 "$src" "$AKDNS_INSTALL_PATH" 2>/dev/null \
+       || { cp -f "$src" "$AKDNS_INSTALL_PATH" 2>/dev/null && chmod 755 "$AKDNS_INSTALL_PATH" 2>/dev/null; }; then
+      return 0
+    fi
   fi
-  log_error "$(t cron_install_fail)"
+
+  # 2) 管道 / 进程替换运行：从远程下载脚本落地
+  local tmp
+  tmp=$(mktemp) || { log_error "$(t cron_install_fail)"; return 1; }
+  log_info "$(t cron_downloading "$AKDNS_SELF_URL")"
+  local ok=false
+  if command -v curl &>/dev/null; then
+    curl -fsSL "$AKDNS_SELF_URL" -o "$tmp" 2>/dev/null && ok=true
+  fi
+  if ! $ok && command -v wget &>/dev/null; then
+    wget -qO "$tmp" "$AKDNS_SELF_URL" 2>/dev/null && ok=true
+  fi
+  # 校验下载内容确实是本脚本（含 shebang 且非空/非错误页）
+  if $ok && head -n1 "$tmp" | grep -q '^#!' && grep -q 'AKDNS' "$tmp"; then
+    if install -m 755 "$tmp" "$AKDNS_INSTALL_PATH" 2>/dev/null \
+       || { cp -f "$tmp" "$AKDNS_INSTALL_PATH" 2>/dev/null && chmod 755 "$AKDNS_INSTALL_PATH" 2>/dev/null; }; then
+      rm -f "$tmp"
+      return 0
+    fi
+  fi
+  rm -f "$tmp"
+
+  log_error "$(t cron_need_file)"
   return 1
 }
 
