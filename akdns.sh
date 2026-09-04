@@ -20,7 +20,7 @@ fi
 VERSION="3.0.0"
 BACKUP_DIR="/var/lib/akdns/backup"
 DOMAIN="www.google.com"
-COUNT=5
+COUNT=2
 TIMEOUT=1
 
 # 接管后是否对 /etc/resolv.conf 加 chattr +i 锁定，
