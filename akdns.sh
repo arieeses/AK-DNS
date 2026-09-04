@@ -373,6 +373,8 @@ MSG[zh.cron_bad_interval]="无法识别的间隔: %s（支持 hourly/daily/weekl
 MSG[en.cron_bad_interval]="Unrecognized interval: %s (use hourly/daily/weekly or Nh)"
 MSG[zh.cron_no_scheduler]="系统既无 systemd 也无 cron，无法安装定时任务"
 MSG[en.cron_no_scheduler]="Neither systemd nor cron is available; cannot install a scheduled task"
+MSG[zh.cron_run_now]="定时任务已安装，现在立即执行一次测速并接管..."
+MSG[en.cron_run_now]="Scheduled task installed; running once now to apply immediately..."
 MSG[zh.help_opt_auto]="非交互式测速并接管（供定时任务调用）"
 MSG[en.help_opt_auto]="Non-interactive speed test & takeover (for scheduled runs)"
 MSG[zh.help_opt_install_cron]="安装定期自动测速（间隔: hourly/daily/weekly/Nh，默认 daily）"
@@ -1986,6 +1988,8 @@ install_schedule() {
   require_root || return 1
   install_self || return 1
 
+  local installed=false
+
   # 1) 优先使用 systemd timer
   if [[ "$INIT_SYSTEM" == "systemd" ]] && command -v systemctl &>/dev/null; then
     local oncal
@@ -2016,14 +2020,13 @@ EOF
     if systemctl enable --now akdns-auto.timer 2>/dev/null; then
       log_success "$(t cron_installed "systemd-timer" "$oncal")"
       systemctl list-timers akdns-auto.timer --no-pager 2>/dev/null | sed -n '1,2p'
-      return 0
+      installed=true
+    else
+      log_error "$(t cron_install_fail)"
+      return 1
     fi
-    log_error "$(t cron_install_fail)"
-    return 1
-  fi
-
   # 2) 回退到 cron.d
-  if [[ -d /etc/cron.d ]] || command -v crontab &>/dev/null; then
+  elif [[ -d /etc/cron.d ]] || command -v crontab &>/dev/null; then
     local cronexpr
     cronexpr=$(interval_to_cron "$interval") || { log_error "$(t cron_bad_interval "$interval")"; return 1; }
     if [[ -d /etc/cron.d ]]; then
@@ -2031,12 +2034,20 @@ EOF
         "$cronexpr" "$AKDNS_INSTALL_PATH" "$AKDNS_AUTO_LOG" > /etc/cron.d/akdns-auto
       chmod 644 /etc/cron.d/akdns-auto
       log_success "$(t cron_installed "cron.d" "$cronexpr")"
-      return 0
+      installed=true
     fi
   fi
 
-  log_error "$(t cron_no_scheduler)"
-  return 1
+  if ! $installed; then
+    log_error "$(t cron_no_scheduler)"
+    return 1
+  fi
+
+  # 安装后立即执行一次，让 DNS 当场生效（无需等到定时器首次触发）
+  echo ""
+  log_info "$(t cron_run_now)"
+  run_auto_apply
+  return 0
 }
 
 # 卸载定期自动测速任务
