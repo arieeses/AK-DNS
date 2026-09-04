@@ -10,17 +10,23 @@ AKDNS 一键测速与系统 DNS 接管脚本（基于 [akile-network/aktools](ht
 
 ## 一键安装 / One-liner
 
+**交互菜单**（下载后运行，最稳；接管 DNS 需 root，请以 root 或 `sudo -i` 运行）：
+
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/arieeses/AK-DNS/main/akdns.sh)
+curl -fsSL https://raw.githubusercontent.com/arieeses/AK-DNS/main/akdns.sh -o akdns.sh && bash akdns.sh
 ```
 
-> 若无 `curl`，可用 `wget`：
->
-> ```bash
-> bash <(wget -qO- https://raw.githubusercontent.com/arieeses/AK-DNS/main/akdns.sh)
-> ```
+装过一次后 `/usr/local/bin/akdns` 已存在，之后直接运行 `akdns` 即可。
 
-运行后进入交互菜单。接管系统 DNS 需要 root，请按提示使用 `sudo` 或以 root 运行。
+**非交互一键装定期自动测速**（无需下载，管道直接传参）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arieeses/AK-DNS/main/akdns.sh | bash -s -- --install-cron=daily
+```
+
+> 说明：请勿使用 `sudo bash <(curl ...)`——进程替换产生的 `/dev/fd` 在 `sudo` 新进程里不可见，会报
+> `/dev/fd/63: No such file or directory`。已是 root 时用上面的写法，非 root 时用 `sudo -i` 切到 root 再运行。
+> 无 `curl` 可把 `curl -fsSL` 换成 `wget -qO-`。
 
 ---
 
